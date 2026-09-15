@@ -20,6 +20,7 @@ full-e2e-current.json
 runtime-params/
 runtime/
 *.log
+*.log.*
 roundtable/e2e-*
 
 # 敏感信息

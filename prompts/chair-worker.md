@@ -38,6 +38,19 @@
 
 不要把“短”当作独立评分项。只删除重复、空泛、客服式和与用户 wish 无关的句子；不得删除理解答案所需的解释、条件、下一步，也不得把黄金话术或 PMF 直球压没。
 
+## 单行硬规则（发布安全，最高优先级）
+
+`final_comment` 必须是可以直接发送的**单行文本**：
+
+- 禁止包含换行符（`\n`、`\r`）或任何形式的换行、空行；
+- 需要表达多个信息点时，用句号、逗号或空格连成一行，不得断行；
+- 禁止用换行排版：不写缩进、不写 `-` 列表符号、不把序号单独占一行；
+- 输出 JSON 时 `line_count` 必须为 `1`。
+
+原因（必须理解，不得绕过）：小红书网页评论框**按回车即提交**。带换行的定稿会被平台在第一个换行处提前发送，结果只发出前半句，并可能在输入阶段产生重复前缀。任何含换行的定稿都属于本轮发布失败。
+
+自我校验：写入 JSON 前，检查 `final_comment` 中是否含有换行字符，也检查是否有连续两个以上空格；发现就合并成单行后再写入。
+
 ## 产品提及
 
 必须沿用 `response_mode` 和 `pmf_fit`：
@@ -66,7 +79,7 @@
 ```json
 {
   "decision": "APPROVE | REJECT",
-  "final_comment": "批准时为逐字回复，否则 NONE",
+  "final_comment": "批准时为逐字回复，否则 NONE；必须是单行，禁止任何换行",
   "sentence_count": 1,
   "line_count": 1,
   "key_point_count": 1,
@@ -79,6 +92,6 @@
 }
 ```
 
-批准前逐项检查：长度是否由目标评论的 wish 与复杂度决定，通常为 1–3 句话、1–4 行；复杂问题更长时是否每句话都有必要；是否避免机械清单和完整教程；`original_match`、`pmf_fit`、`response_mode` 是否与最终稿一致。不要仅因超过 3 句话就继续删改。
+批准前逐项检查：长度是否由目标评论的 wish 与复杂度决定，通常为 1–3 句话、1–4 行；复杂问题更长时是否每句话都有必要；是否避免机械清单和完整教程；`original_match`、`pmf_fit`、`response_mode` 是否与最终稿一致；`final_comment` 是否为**无换行的单行文本**且 `line_count=1`。不要仅因超过 3 句话就继续删改。
 
 完成后立即 `kanban_complete`，metadata 至少包含 `decision`、`final_comment`、`sentence_count`、`line_count`、`key_point_count`、`original_match`、`pmf_fit`、`response_mode`、`output_file`。禁止创建新卡。

@@ -651,3 +651,25 @@ v0.8 因 Gemini 重复崩溃和搜索框失焦废弃。已删除整板、清理�
 - 本次改动为两处文件：`run.py`（阻塞后中止）与 `run_loop.sh`（识别退出码 3 后停止循环）——两者缺一不可，单独改 `run.py` 会让外层 `while true` 在 5 秒后重开一轮并重新派活。未新增任何测试文件。
 - 零成本实测（`/tmp` 桩程序替换 `run.py`，不派 worker、不花钱）：退出码 3 时打印提示并以 0 退出；退出码 1 时按 `XHS_LOOP_SLEEP_SECONDS` 继续循环。
 - 真实链路的「scout 判定 LOGIN_REQUIRED → 卡片 blocked → 循环退出」待下次真实运行确认；当前运行中的进程仍是 v0.49 的休眠版本，可继续停留在休眠状态。
+
+## v0.51 — scout 固定使用 xiaohongshu.com 域名
+
+- 现象：共享浏览器里小红书明明已登录，scout 仍稳定返回 `LOGIN_REQUIRED`，连续三轮被登录门禁拦下。
+- 根因：scout prompt 的 S1/S3 让 worker 打开 `https://www.rednote.com/`，而登录 Cookie 属于 `https://www.xiaohongshu.com/`。同一浏览器下两个域名登录态不共享，`rednote.com` 真实显示未登录，左侧栏没有“我”，于是状态机按规则判定 `LOGIN_REQUIRED`——判断本身没错，错的是 prompt 给的域名。
+- 修订：S1 改为 `https://www.xiaohongshu.com/explore?channel_id=homefeed_recommend`，S3 的重新打开首页同样改用该域名，并明确禁止切回 `rednote.com`。
+- 验证：改用新地址后 S1 直接通过（左侧栏识别到“我”），随后 S2 刷新推荐流、S3 读卡正常推进。
+
+## v0.52 — 定稿单行硬规则、有界重输与遮挡弹窗处理
+
+- 现象一（真实副作用）：两轮把定稿只发出了前半句。委员长定稿含 `\n`，`agent-browser type` 把换行当回车，而小红书网页评论框**按回车即提交**，第二句根本没进编辑器；这类失败被记为 `NEEDS_VERIFIER`，导致发布复核被跳过，残缺回复留在线上。
+- 现象二：一轮输入后编辑器出现重复前缀（64 字 vs 定稿 60 字），发布 worker 遵守“禁止重复输入”直接放弃整轮，什么都没发，白跑一轮。
+- 现象三：一轮因页面弹出广告屏蔽插件提示，回复框绑定失败，尝试 2 次后未发送。
+- 修订（prompt 层）：
+  - `chair-worker.md` 增加“单行硬规则（发布安全，最高优先级）”：`final_comment` 禁止任何换行符、空行、缩进与按行排版，`line_count` 必须为 1，并解释回车即提交的原因；批准前自检项同步加入单行校验。
+  - `review-worker.md` 的 `draft` 同样要求单行，避免委员稿的换行污染下游定稿。
+  - `xhs-reply-style.md` 增加执行层单行约束，并把“是否为无换行单行文本”加入发布前自检清单。
+  - `publish-send-worker.md`：新增强制归一化步骤（输入前把 `\r\n`、`\r`、`\n` 替换为空格并合并连续空格，得到 `SEND_TEXT` 作为唯一比对基准）；新增“开页先清遮挡弹窗”步骤（广告屏蔽/插件/引导/浮层，最多尝试关闭 2 次，只点关闭类按钮）；第 12 步改为**有界重输**：输入后逐字校验，不一致时清空编辑器重输一次，累计最多 2 次，仍不一致写 `TEXT_MISMATCH` 且不得发送；明确禁止用补丁式字符插入硬凑一致。输入前还要求先确认编辑器为空。
+  - `schemas/chair-result.md`、`schemas/publish-send-result.md` 同步单行约束，并新增 `newline_normalized`、`text_input_attempts`（只允许 1 或 2）、`popup_dismissed` 三个字段与规则说明。
+- 修订（确定性兜底）：`run.py` 新增 `normalize_approved_draft()`，在委员长 APPROVE 之后、激活发布卡之前，直接读取并改写 `runtime/chair-decision.json`：把 `final_comment` 中的换行折叠为空格、合并连续空格、把 `line_count` 置 1、写入 `newline_normalized: true`，命中时向 stderr 打印 `[draft-guard]` 行。该守卫幂等，重复调用返回 `UNCHANGED`；文件缺失或不可解析时安全跳过，不阻断流程。这样即使模型无视 prompt 输出了换行定稿，也不会有换行进入发布路径。
+- 落地验证：以临时目录构造含换行定稿实测——首次调用返回 `NORMALIZED`（折叠 1 个换行、`line_count` 变 1、`newline_normalized=true`），再次调用返回 `UNCHANGED`，单行定稿返回 `UNCHANGED`，文件缺失返回 `SKIPPED_UNREADABLE`。
+- 未改动：判断节点结构、审核冗余、轮次编排、发布与复核的语义门、其他 prompt 的既有约束。未新增测试文件。

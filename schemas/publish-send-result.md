@@ -15,6 +15,9 @@ vision_calls: 0
 vision_format_retries: 0
 reply_target_after_type_check: A11Y | READ_PRECHECK_CARRIED_FORWARD | UNKNOWN
 draft_input_method: PARAM_FILE_VARIABLE
+newline_normalized: YES | NO
+text_input_attempts: 1 | 2
+popup_dismissed: YES | NO | NONE
 text_typed_once: YES | NO
 text_exact_match: YES | NO | UNKNOWN
 send_enabled_after_type: YES | NO | UNKNOWN
@@ -30,7 +33,10 @@ obstacles:
 
 规则：
 
-- `SEND_SUCCESS` 只用于：目标楼层的作者和唯一评论前缀均匹配、回复对象已明确、定稿通过参数变量输入一次、文字逐字匹配、发送按钮已 enabled、已点击发送、发送后编辑器已重置且页面未异常。
+- `SEND_SUCCESS` 只用于：目标楼层的作者和唯一评论前缀均匹配、回复对象已明确、定稿通过参数变量输入、文字与**归一化后的单行文本**逐字匹配、发送按钮已 enabled、已点击发送、发送后编辑器已重置且页面未异常。
+- **发布前必须归一化**：`final_comment` 中的 `\r\n`、`\r`、`\n` 全部替换为空格，连续两个以上空格合并为一个。`newline_normalized=YES` 表示原定稿含换行并已被归一化；`NO` 表示原本就是单行。归一化后的文本才是比对与输入的基准。
+- `text_input_attempts` 只允许 `1`（首输即一致）或 `2`（发生过一次有界重输：清空编辑器后重输一次）。禁止超过 2 次，禁止用补丁式字符插入硬凑一致；重输后仍不一致必须 `TEXT_MISMATCH` 且不得发送。
+- `popup_dismissed` 记录开页后的遮挡弹窗处理结果；`NONE` 表示页面没有弹窗。只允许点击关闭类按钮，禁止点击弹窗内的下载、安装、去登录、领取、购买等动作，也不得向弹窗输入内容。
 - `SEND_FAILED` 用于：发送按钮点击后无响应、编辑器未清空、页面报错、或发送按钮仍 enabled 但文字未消失。
 - `READ_TEXT` 表示使用 `agent-browser read` 确认 snapshot 缺失的评论正文与点击后的 `回复 <作者>`。
 - `vision_calls` 与 `vision_format_retries` 永远为 `0`；read 缺少关键字段时必须 `NEEDS_VERIFIER`，不得输入或发送。

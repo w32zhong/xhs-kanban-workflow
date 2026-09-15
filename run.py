@@ -11,6 +11,7 @@ import contextlib
 import fcntl
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -21,6 +22,7 @@ from typing import Any, Iterator
 ROOT = Path(__file__).resolve().parent
 RUNTIME_DIRS = ("runtime", "runtime-params", "logs", "evidence", "roundtable")
 RUNTIME_ROOT_FILES = ("current-run.json", "full-e2e-current.json")
+DRAFT_FILE = Path("runtime") / "chair-decision.json"
 ACTIVE_STATUSES = {"triage", "todo", "scheduled", "ready", "running", "review", "blocked"}
 WAITING_STATUSES = {"triage", "todo", "scheduled", "ready", "blocked"}
 
@@ -212,6 +214,42 @@ def _result_status(run: dict[str, Any]) -> str | None:
     )
 
 
+def normalize_approved_draft(root: Path = ROOT) -> dict[str, Any]:
+    """Collapse newlines in the approved draft before it reaches the publisher.
+
+    The Xiaohongshu web comment box submits on Enter, so a draft that contains a
+    newline is published as a truncated first line, and the input step can even
+    duplicate a prefix. Prompt rules already forbid newlines; this guard makes
+    the guarantee deterministic no matter what the chair agent produced.
+    """
+    path = root / DRAFT_FILE
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {"status": "SKIPPED_UNREADABLE", "path": str(path), "error": str(exc)}
+    draft = data.get("final_comment")
+    if not isinstance(draft, str) or not draft.strip():
+        return {"status": "SKIPPED_NO_DRAFT", "path": str(path)}
+    normalized = re.sub(r"[ \t]*[\r\n]+[ \t]*", " ", draft)
+    normalized = re.sub(r"[ \t]{2,}", " ", normalized).strip()
+    if normalized == draft:
+        return {"status": "UNCHANGED", "path": str(path)}
+    data["final_comment"] = normalized
+    data["line_count"] = 1
+    data["newline_normalized"] = True
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        tmp.replace(path)
+    except OSError as exc:
+        return {"status": "FAILED", "path": str(path), "error": str(exc)}
+    return {
+        "status": "NORMALIZED",
+        "path": str(path),
+        "removed_line_breaks": draft.count("\n") + draft.count("\r"),
+    }
+
+
 def apply_semantic_gates(
     board: str,
     state: dict[str, Any],
@@ -300,6 +338,16 @@ def apply_semantic_gates(
         return False
     if chair != "APPROVE":
         return skip(["publish-send", "publish-verify"], f"chair ended with {chair}")
+    # Deterministic safety net: the approved draft must be a single line before
+    # it reaches the publisher, because the XHS comment box submits on Enter.
+    draft_guard = normalize_approved_draft()
+    if draft_guard.get("status") == "NORMALIZED":
+        print(
+            f"[draft-guard] collapsed {draft_guard['removed_line_breaks']} line break(s) "
+            f"in the approved draft: {draft_guard['path']}",
+            file=sys.stderr,
+            flush=True,
+        )
     if activate(["publish-send"]):
         return True
 

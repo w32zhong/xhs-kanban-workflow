@@ -75,7 +75,7 @@ ACCOUNT_NAME_LITERAL='<运行时传入的当前账号昵称>'
 
 ### S1：打开首页并判断登录
 
-1. `agent-browser open https://www.rednote.com/?channel_id=homefeed_recommend`。
+1. `agent-browser open https://www.xiaohongshu.com/explore?channel_id=homefeed_recommend`。必须使用 `xiaohongshu.com`，禁止切换到 `rednote.com`；两者登录 Cookie 不共享，本沙箱的已登录会话位于 `xiaohongshu.com`。
 2. 等待页面稳定后做一次 fresh snapshot。
 3. **仅用左侧栏个人入口判断登录，不点击，也不核对账号昵称：**
    - snapshot 中左侧栏出现个人入口“我”或“Me”：视为已登录，继续；无论当前登录的是哪个账号，都不得因其不是 `ACCOUNT_NAME_LITERAL` 而拒绝；
@@ -104,7 +104,7 @@ ACCOUNT_NAME_LITERAL='<运行时传入的当前账号昵称>'
 
 1. 不做关键词搜索。
 2. 当前可见区域无相关帖子时向下滚动一次，再读取新卡片；最多滚动 2 次。
-3. 仍无候选时只允许**重新加载首页**一次：`agent-browser open https://www.rednote.com/?channel_id=homefeed_recommend`，再检查首屏；不得再次 reload。
+3. 仍无候选时只允许**重新加载首页**一次：`agent-browser open https://www.xiaohongshu.com/explore?channel_id=homefeed_recommend`，再检查首屏；不得再次 reload，也不得改用 `rednote.com`。
 4. 点击页面顺序中的第一篇相关帖子，不比较热度，不寻找“更优帖子”。
 5. 每次打开帖子都将 `posts_checked` 加一；最多打开 2 篇。
 

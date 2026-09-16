@@ -140,4 +140,4 @@ hermes kanban --board xhs-run log <task-id>
 
 - `source-archive/`：早期资料留档，**仅作可疑参考，不作执行依据**；
 - `SCOUT-REFINEMENT.md` + `scout-pipeline.json`：`--scout-only` 单阶段调试路径；
-- 独立的 `search-worker`、独立 `verify-worker` 等早期阶段已废弃，历史见 `CHANGELOG.md`。
+- 独立的 `search-worker`、独立 `verify-worker` 等早期阶段已废弃。

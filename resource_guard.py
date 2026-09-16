@@ -61,6 +61,7 @@ def cleanup_browser_sessions(root: Path) -> dict[str, Any]:
         # `close` tears down the session's daemon; `tab close` only closes the
         # tab and leaves the daemon resident, so the next run refreshes it and it
         # never reaches its idle timeout.
+        browser("--session", name, "tab", "close")
         proc = browser("--session", name, "close")
         detail = (proc.stderr or proc.stdout).strip()
         if proc.returncode == 0 or "tab_gone" in detail or "no active tab" in detail.lower():

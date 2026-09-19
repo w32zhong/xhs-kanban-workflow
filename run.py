@@ -12,6 +12,7 @@ import fcntl
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 import time
@@ -151,11 +152,71 @@ def list_tasks(board: str) -> list[dict[str, Any]]:
     return json.loads(proc.stdout)
 
 
-def archive_visible_tasks(board: str) -> None:
-    """Archive every currently visible card while preserving board history."""
+def purge_visible_tasks(board: str) -> None:
+    """Delete every card left on the board so no run accumulates board state.
+
+    ``archive`` only moves a card to the archived state; ``--rm`` is what
+    actually deletes it from the board DB, so both calls are required.
+    """
     task_ids = [task_id for task in list_tasks(board) if isinstance(task_id := task.get("id"), str) and task_id]
     if task_ids:
         command(["hermes", "kanban", "--board", board, "archive", *task_ids])
+        command(["hermes", "kanban", "--board", board, "archive", "--rm", *task_ids])
+
+
+def purge_archived_tasks(board: str) -> None:
+    """Delete archived cards left behind by an earlier run or a crashed round."""
+    proc = command([
+        "hermes", "kanban", "--board", board, "list",
+        "--archived", "--status", "archived", "--json",
+    ])
+    task_ids = [tid for task in json.loads(proc.stdout) if isinstance(tid := task.get("id"), str) and tid]
+    if task_ids:
+        command(["hermes", "kanban", "--board", board, "archive", "--rm", *task_ids])
+
+
+def prune_worker_sessions(profile: str) -> None:
+    """Delete the worker sessions this workflow created.
+
+    Dispatcher-spawned workers are tagged ``HERMES_SESSION_SOURCE=kanban``, and
+    prune skips sessions that are still open, so this is safe while a round is
+    running. ``optimize`` then returns the freed pages to the filesystem, because
+    prune's own VACUUM is rate-limited by ``sessions.min_vacuum_interval_days``.
+    """
+    command(
+        ["hermes", "-p", profile, "sessions", "prune", "--source", "kanban", "--yes"],
+        check=False,
+    )
+    command(["hermes", "-p", profile, "sessions", "optimize"], check=False)
+
+
+def purge_worker_logs(board: str) -> None:
+    """Delete the dispatcher's per-task worker logs for this board.
+
+    ``hermes kanban gc`` defaults to a 30-day log retention, which is exactly the
+    accumulation this workflow must not have. It runs here, at the end of the
+    round, so no live worker still owns a log file.
+    """
+    command([
+        "hermes", "kanban", "--board", board, "gc",
+        "--log-retention-days", "0", "--event-retention-days", "0",
+    ], check=False)
+
+
+def vacuum_board_db(board: str) -> None:
+    """Return freed pages to the filesystem after a purge (best effort)."""
+    try:
+        proc = command(["hermes", "kanban", "boards", "list", "--json"])
+        db_path = next(
+            (item["db_path"] for item in json.loads(proc.stdout) if item.get("slug") == board),
+            None,
+        )
+        if not db_path or not Path(db_path).is_file():
+            return
+        with contextlib.closing(sqlite3.connect(db_path)) as conn:
+            conn.execute("VACUUM")
+    except (OSError, sqlite3.Error, RuntimeError):
+        pass
 
 
 def board_is_terminal(tasks: list[dict[str, Any]], current_task_ids: set[str]) -> bool:
@@ -513,6 +574,30 @@ def remove_board(board: str) -> dict[str, Any]:
     return {"ok": proc.returncode == 0, "detail": (proc.stderr or proc.stdout).strip()[-1000:]}
 
 
+def purge_round_state(cfg: RunnerConfig) -> dict[str, Any]:
+    """Delete everything this round added to the board and the session store.
+
+    The workflow must leave no state behind: every round removes its own cards
+    and the worker sessions it spawned, so a long-running loop grows neither the
+    board DB nor the profile's session store. Failures are reported, never fatal.
+    """
+    report: dict[str, Any] = {}
+    try:
+        purge_visible_tasks(cfg.board_slug)
+        purge_archived_tasks(cfg.board_slug)
+        purge_worker_logs(cfg.board_slug)
+        vacuum_board_db(cfg.board_slug)
+        report["board"] = "PURGED"
+    except Exception as exc:
+        report["board"] = f"{type(exc).__name__}: {exc}"
+    try:
+        prune_worker_sessions(cfg.profile)
+        report["sessions"] = "PRUNED"
+    except Exception as exc:
+        report["sessions"] = f"{type(exc).__name__}: {exc}"
+    return report
+
+
 def execute_campaign(root: Path, cfg: RunnerConfig, *, pipeline_config: Path | None = None) -> dict[str, Any]:
     started = time.time()
     runtime_before = snapshot_runtime_files(root)
@@ -522,7 +607,7 @@ def execute_campaign(root: Path, cfg: RunnerConfig, *, pipeline_config: Path | N
     try:
         with runner_lock(root):
             prepare_board(cfg.board_slug, cfg.workspace)
-            archive_visible_tasks(cfg.board_slug)
+            purge_visible_tasks(cfg.board_slug)
             state = start_iteration(root, cfg, pipeline_config=pipeline_config)
             started_board = state.get("board")
             if not isinstance(started_board, str) or not started_board:
@@ -538,6 +623,8 @@ def execute_campaign(root: Path, cfg: RunnerConfig, *, pipeline_config: Path | N
     finally:
         cleanup["board"] = {"ok": True, "kept": True, "slug": cfg.board_slug}
         cleanup["guard"] = run_final_guard(root)
+        # Retention: this workflow must not accumulate state across runs.
+        cleanup["retention"] = purge_round_state(cfg)
     result["cleanup"] = cleanup
     result["elapsed_seconds"] = round(time.time() - started, 1)
     if board and "board" not in result:

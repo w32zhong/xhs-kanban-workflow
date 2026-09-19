@@ -36,6 +36,21 @@ def configure(profile: str, workspace: Path) -> Path:
     terminal["backend"] = "local"
     terminal["cwd"] = str(workspace.resolve())
 
+    # Retention lives in the repo, not in whatever supervisor spawns the loop: a
+    # worker profile is disposable, so cap its logs and let it prune the sessions
+    # its kanban runs create instead of keeping them for the default 90 days.
+    logging_cfg = data.setdefault("logging", {})
+    logging_cfg["level"] = "WARNING"
+    logging_cfg["max_size_mb"] = 1
+    logging_cfg["backup_count"] = 0
+
+    sessions = data.setdefault("sessions", {})
+    sessions["auto_prune"] = True
+    sessions["retention_days"] = 1
+    sessions["auto_archive"] = False
+    sessions["vacuum_after_prune"] = True
+    sessions["min_interval_hours"] = 1
+
     config_path.write_text(
         yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
         encoding="utf-8",

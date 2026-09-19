@@ -98,15 +98,13 @@ python3 run.py --scout-only \
 
 同一时间只能运行一轮；`run.py` 会加进程锁。完整流程通常需要数分钟到半小时。
 
-持续循环运行：
+持续循环运行（无需任何环境变量，profile 与昵称直接读 `runner-config.json`）：
 
 ```bash
-XHS_AGENT_PROFILE=<profile-name> \
-XHS_ACCOUNT_NAME='<当前登录的小红书昵称>' \
 ./run_loop.sh
 ```
 
-`run_loop.sh` 会等待每轮结束后再启动下一轮；单轮失败也会记录并继续。可用 `XHS_LOOP_SLEEP_SECONDS` 调整轮次间隔。
+`run_loop.sh` 会等待每轮结束后再启动下一轮；单轮失败也会记录并继续。可用 `XHS_LOOP_SLEEP_SECONDS` 调整轮次间隔，`XHS_AGENT_PROFILE` / `XHS_ACCOUNT_NAME` 可临时覆盖 `runner-config.json`。
 
 ## 查看状态
 
@@ -116,7 +114,28 @@ hermes kanban --board xhs-run show <task-id> --json
 hermes kanban --board xhs-run log <task-id>
 ```
 
-`run.py` 会保留当前 `xhs-run` 看板，清理本轮临时文件和多余浏览器标签页。
+## 磁盘与状态保留（每轮不累积）
+
+保留策略完全由仓库代码控制，不依赖任何外部 supervisor / cron 清理脚本。每轮结束后 `run.py`
+都会删除本轮产生的全部状态，长期循环不会让磁盘增长：
+
+- 本轮的全部卡片：先 `archive` 再 `archive --rm`，并对看板库 `VACUUM` 回收空间
+  （`archive` 只是把卡片标记为已归档，不删数据）；
+- 早前轮次或崩溃轮次残留的归档卡片；
+- 本轮 worker 产生的会话：`hermes -p <profile> sessions prune --source kanban --yes`
+  （正在运行的会话会被自动跳过，因此随时执行都安全），随后 `sessions optimize` 回收空间；
+- dispatcher 为每张卡写的 worker 日志文件（`hermes kanban gc --log-retention-days 0`，
+  默认保留 30 天，这里改成整轮清除；在轮次结束时执行，因此不会删掉活动 worker 的日志）；
+- `runtime/`、`runtime-params/`、`logs/`、`evidence/`、`roundtable/`、`current-run.json`
+  等运行时文件；
+- 本轮打开的浏览器 session 与多余标签页。
+
+`run_loop.sh` 自己以 append 模式持有 `logs/loop.out.log` 并在每轮开始时截断，所以日志只保留
+一轮的输出，也不依赖 supervisor 的日志轮转。worker profile 的 `logging`（级别、单文件上限、
+不保留备份）与 `sessions`（自动清理）由 `scripts/configure-worker-profile.py` 一并写入。
+
+所以一个全新环境只需要：克隆仓库 → 跑一次 `scripts/configure-worker-profile.py` → 填好
+`runner-config.json` → `./run_loop.sh`。不需要额外的配置或清理步骤。
 
 ## 发布安全规则
 

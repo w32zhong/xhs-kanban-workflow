@@ -179,11 +179,17 @@ def dispatch_board(board: str, *, max_tasks: int = 2) -> None:
 
 
 def finish_without_worker(board: str, task_id: str, reason: str) -> None:
-    """Complete a waiting card deterministically so no LLM worker is spawned."""
+    """Complete a waiting card deterministically so no LLM worker is spawned.
+
+    ``promote`` only accepts a card in ``todo``/``blocked`` while ``complete``
+    only accepts a card past ``todo``, and the dispatcher already promotes a
+    ``todo`` card to ``ready`` as soon as its parents close. Promote is therefore
+    best-effort: an already-``ready`` card must not be promoted again.
+    """
     command([
         "hermes", "kanban", "--board", board, "promote", task_id,
-        "semantic gate skip", "--force",
-    ])
+        "semantic gate skip",
+    ], check=False)
     metadata = json.dumps({"status": "SKIPPED", "reason": reason}, ensure_ascii=False)
     command([
         "hermes", "kanban", "--board", board, "complete", task_id,
@@ -200,7 +206,7 @@ def block_for_login(board: str, task_ids: list[str], reason: str = LOGIN_REQUIRE
     an operator unblocks the cards.
     """
     for task_id in task_ids:
-        command(["hermes", "kanban", "--board", board, "promote", task_id, reason, "--force"], check=False)
+        command(["hermes", "kanban", "--board", board, "promote", task_id, reason], check=False)
         command(["hermes", "kanban", "--board", board, "block", task_id, reason], check=False)
 
 

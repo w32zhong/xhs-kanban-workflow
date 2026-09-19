@@ -29,6 +29,12 @@ hermes profile list
 hermes profile create <profile-name> --clone-from default
 ```
 
+> **`--profile` 接受 profile ID，不是显示名。** `hermes profile list` 的
+> `显示名 (profile-id)` 一栏里，括号内的才是要传的值。沙箱自带的 profile 显示名
+> 可能与 ID 不同（例如 `efficient-Gabie (agent-3922e063be8d5bf1)`），这时
+> `hermes --profile efficient-Gabie ...` 会报 `does not exist`，必须传
+> `agent-3922e063be8d5bf1`。`runner-config.json` 的 `profile` 字段同样填 profile ID。
+
 在仓库根目录配置该 profile：
 
 ```bash
